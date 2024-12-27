@@ -50,7 +50,9 @@ This command will:
 
 Keep your session cookie private and do not share it with others. The session cookie is valid for a limited time, make sure it is valid before running the program.
 
+Be careful when performing requests to the [adventofcode](https://adventofcode.com/) site to no overload the servers.
+
 ## Requirements
 
-- Python 3.6 or higher
+- Python 3 or higher (made on version 3.13.1)
 - requests library (automatically installed during setup)
