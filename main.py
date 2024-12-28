@@ -3,7 +3,7 @@ import argparse
 import os
 
 def create_day_and_year_folder(year: str, day: str):
-    os.makedirs(f"{year}/day{day}", exist_ok=True)
+    os.makedirs(f"{year}/{day}", exist_ok=True)
 
 def get_input_data(year: str, day: str, session: str):
     input_url = f"https://adventofcode.com/{year}/day/{day}/input"
@@ -15,11 +15,11 @@ def get_input_data(year: str, day: str, session: str):
         file_path = f"{year}/{day}/input.txt"
 
         if not os.path.isfile(file_path):
-            open(file_path, 'a').close()
+            with open(file_path, 'w') as file:
+                file.write("")
 
         with open(file_path, 'w') as file:
             file.write(input_file)
-        print("Input data downloaded successfully.")
     else:
         print(f"Failed to download input data. Status code: {response.status_code}")
 
