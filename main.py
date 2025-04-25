@@ -1,52 +1,99 @@
-import requests
+"""
+Advent-of-Code bootstrapper.
+
+Creates ⟨year⟩/⟨day⟩, downloads the puzzle input and
+optionally scaffolds solution folders for Rust, Go and Python.
+
+Usage
+-----
+    aoc-init -y 2025 -d 7 -s "$AOC_SESSION"     # scaffold all three
+    aoc-init -y 2025 -d 7 -s "$AOC_SESSION" -l rust go
+"""
+
+from __future__ import annotations
 import argparse
 import os
+import subprocess
+import sys
+from pathlib import Path
+import requests 
 
-def create_day_and_year_folder(year: str, day: str):
-    current_dir = os.getcwd()
-    if year in current_dir:
-        full_path = f"{day}"
-    else:
-        if not os.path.exists(year):
-            os.makedirs(year)
-        full_path = f"{year}/{day}"
-    
-    if not os.path.exists(full_path):
-        os.makedirs(full_path)
-    return full_path
+# ––––– Supported languages –––––
+LANGUAGES = ("rust", "go", "python")
 
-def get_input_data(year: str, day: str, session: str):
-    input_url = f"https://adventofcode.com/{year}/day/{day}/input"
-    cookies = dict(session=session)
-    response = requests.get(input_url, cookies=cookies)
+# ---------- core helpers -----------------------------------------------
+def create_day_folder(year: str, day: str) -> Path:
+    root = Path.cwd()
+    target = (root / day) if year in root.parts else (root / year / day)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
-    if response.status_code == 200:
-        input_file = response.text
-        base_path = day if year in os.getcwd() else f"{year}/{day}"
-        file_path = f"{base_path}/input.txt"
+def fetch_input(year: str, day: str, session: str, dst: Path) -> None:
+    url = f"https://adventofcode.com/{year}/day/{int(day)}/input"
+    r = requests.get(url, cookies={"session": session}, timeout=15)
+    r.raise_for_status()
+    (dst / "input.txt").write_text(r.text)
+    (dst / "example.txt").touch()
 
-        if not os.path.isfile(file_path):
-            with open(file_path, 'w') as file:
-                file.write("")
-                
-        with open(file_path, 'w') as file:
-            file.write(input_file)
+# ---------- language scaffolding ---------------------------------------
+def rust_project(dst: Path, year: str, day: str) -> None:
+    rust_dir = dst / "rust"
+    if rust_dir.exists():
+        return
+    subprocess.run(["cargo", "new", "rust", "--vcs", "none"], check=True, cwd=dst)
+    toml = rust_dir / "Cargo.toml"
+    toml.write_text(
+        toml.read_text().replace(
+            'name = "rust"',
+            f'name = "aoc_AdventOfCode_{year}_day_{day}_rust"'
+        )
+    )
 
-        # Create empty example.txt file
-        with open(f"{base_path}/example.txt", "w") as file:
-            file.write("")
-    else:
-        print(f"Failed to download input data. Status code: {response.status_code}")
+def go_project(dst: Path, year: str, day: str) -> None:
+    go_dir = dst / "go"
+    if go_dir.exists():
+        return
+    go_dir.mkdir()
+    subprocess.run(
+        ["go", "mod", "init", f"aoc_AdventOfCode_{year}_day_{day}_go"],
+        check=True, cwd=go_dir
+    )
+    (go_dir / "main.go").write_text(
+        f'package main\n\nimport "fmt"\n\nfunc main() {{\n'
+        f'\tfmt.Println("Day {day} — Advent of Code {year}")\n}}\n'
+    )
 
-def main():
-    parser = argparse.ArgumentParser(description="Create a folder and download input for the day and year provided.")
-    parser.add_argument("-d", "--day", required=True, type=str, help="Day of the challenge from 1 - 25")
-    parser.add_argument("-y", "--year", required=True, type=str, help="Year of the challenge starting from 2015")
-    parser.add_argument("-s", "--session", required=True, type=str, help="Your session cookie")
-    args = parser.parse_args()
+def python_project(dst: Path, *_args) -> None:
+    py_dir = dst / "python"
+    if py_dir.exists():
+        return
+    py_dir.mkdir()
+    subprocess.run([sys.executable, "-m", "venv", ".venv"], check=True, cwd=py_dir)
+    (py_dir / "main.py").write_text(
+        'def main():\n    print("Solve me!")\n\n'
+        'if __name__ == "__main__":\n    main()\n'
+    )
 
-    create_day_and_year_folder(args.year, args.day)
-    get_input_data(args.year, args.day, args.session)
+CREATORS = {"rust": rust_project, "go": go_project, "python": python_project}
+
+def main() -> None:
+    p = argparse.ArgumentParser(prog="aoc-init", description="AoC day bootstrapper")
+    p.add_argument("-d", "--day", required=True, help="Day 1-25 (no zero-padding)")
+    p.add_argument("-y", "--year", required=True, help="Challenge year (2015-…)") 
+    p.add_argument("-s", "--session", required=True, help="AoC session cookie")
+    p.add_argument("-l", "--language", nargs="+", default=["all"],
+                   choices=list(LANGUAGES) + ["all"],
+                   help="Languages to scaffold (default = all)")
+    args = p.parse_args()
+
+    day = args.day.zfill(2)
+    day_dir = create_day_folder(args.year, day)
+    fetch_input(args.year, day, args.session, day_dir)
+
+    langs = LANGUAGES if "all" in args.language else args.language
+    for lang in langs:
+        CREATORS[lang](day_dir, args.year, day)
 
 if __name__ == "__main__":
     main()
+
