@@ -10,7 +10,7 @@ long_description = (this_directory / "README.md").read_text(
 
 setup(
     name="advent-of-code-setup",
-    version="0.3.0",  # Incremented version for BeautifulSoup integration
+    version="0.4.0",  # Incremented version for BeautifulSoup integration
     description="A CLI tool to bootstrap Advent of Code daily challenges: creates directories, fetches input, problem statements, and scaffolds language projects.",
     long_description=long_description,
     long_description_content_type="text/markdown",

@@ -2,13 +2,14 @@
 Advent-of-Code bootstrapper.
 
 Creates <year>/<day> directory structure, downloads puzzle input,
-optionally fetches the problem statement using BeautifulSoup, and
-optionally scaffolds solution folders for supported languages.
+optionally fetches/refreshes the problem statement using BeautifulSoup,
+and optionally scaffolds solution folders for supported languages.
 Looks for AOC_SESSION in .env file or takes it via -s/--session argument.
 
 Usage examples:
     aoc-init -y 2025 -d 7
     aoc-init -y 2025 -d 7 -i
+    aoc-init -y 2025 -d 7 --refresh-instructions
     aoc-init -y 2025 -d 7 -s "YOUR_AOC_SESSION_COOKIE" -l rust go
     aoc-init -y 2025 -d 7 -l python --verbose --instructions
 """
@@ -22,9 +23,8 @@ import sys
 from pathlib import Path
 import requests
 from datetime import datetime
-import re  # Still used for some minor text cleaning if needed, but primarily for BeautifulSoup now.
+import re
 
-# Attempt to import BeautifulSoup, provide guidance if not found (though setup.py should handle it)
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -160,12 +160,27 @@ def fetch_and_save_instructions(
     session_cookie: str,
     destination_path: Path,
     verbose: bool,
-) -> None:
-    """Fetches the problem statement HTML, parses it with BeautifulSoup, and saves it as a text file."""
+) -> str:
+    """
+    Fetches the problem statement HTML, parses it with BeautifulSoup, and saves it as a text file.
+    Returns a status string: "CREATED", "UPDATED", "UNCHANGED", "NOT_FOUND", "FAILED_FETCH", "FAILED_WRITE".
+    """
     problem_url = f"{AOC_BASE_URL}/{year}/day/{int(day_str_unpadded)}"
     input_file_url = f"{problem_url}/input"
     headers = {"User-Agent": USER_AGENT}
     cookies = {"session": session_cookie}
+
+    instructions_file = destination_path / "problem_statement.txt"
+    old_content: str | None = None
+    if instructions_file.exists():
+        try:
+            old_content = instructions_file.read_text(encoding="utf-8")
+        except OSError as e:
+            print(
+                f"Warning: Could not read existing instructions file at {instructions_file} for comparison. {e}",
+                file=sys.stderr,
+            )
+            # Continue, old_content will be None
 
     try:
         if verbose:
@@ -175,10 +190,7 @@ def fetch_and_save_instructions(
         )
         response.raise_for_status()
         html_content = response.text
-
         soup = BeautifulSoup(html_content, "html.parser")
-
-        # Find all <article class="day-desc">...</article> parts
         problem_articles = soup.find_all("article", class_="day-desc")
 
         if not problem_articles:
@@ -200,39 +212,44 @@ def fetch_and_save_instructions(
                     f"Raw HTML saved to {debug_html_path} for inspection.",
                     file=sys.stderr,
                 )
-            return
+            return "NOT_FOUND"
 
         full_problem_text = (
             f"Problem Statement for Advent of Code {year} Day {day_str_unpadded}\n"
         )
         full_problem_text += f"Source: {problem_url}\n"
         full_problem_text += f"Input File URL: {input_file_url}\n\n"
-
         part_titles = ["--- Part One ---", "--- Part Two ---"]
 
         for i, article in enumerate(problem_articles):
             if i < len(part_titles):
                 full_problem_text += f"{part_titles[i]}\n"
             else:
-                full_problem_text += (
-                    f"--- Part {i + 1} ---\n"  # For any additional parts
-                )
-
-            # Use BeautifulSoup's get_text() for cleaner text extraction.
-            # The 'separator="\n"' argument helps maintain paragraph breaks.
-            # 'strip=True' removes leading/trailing whitespace from each chunk.
+                full_problem_text += f"--- Part {i + 1} ---\n"
             part_text = article.get_text(separator="\n", strip=True)
-
-            # Optional: Further clean up multiple newlines that might result from get_text()
-            part_text = re.sub(
-                r"\n\s*\n", "\n\n", part_text
-            )  # Consolidate multiple newlines
-
+            part_text = re.sub(r"\n\s*\n", "\n\n", part_text)
             full_problem_text += part_text.strip() + "\n\n"
 
-        instructions_file = destination_path / "problem_statement.txt"
-        instructions_file.write_text(full_problem_text.strip(), encoding="utf-8")
-        print(f"Problem statement saved to {instructions_file}")
+        new_content = full_problem_text.strip()
+
+        try:
+            instructions_file.write_text(new_content, encoding="utf-8")
+        except OSError as e_write:
+            print(
+                f"Error: Could not write problem statement file to {instructions_file}. {e_write}",
+                file=sys.stderr,
+            )
+            return "FAILED_WRITE"
+
+        if old_content is None:
+            print(f"Problem statement newly saved to {instructions_file}")
+            return "CREATED"
+        elif old_content == new_content:
+            print(f"Problem statement at {instructions_file} is already up-to-date.")
+            return "UNCHANGED"
+        else:  # old_content existed and is different from new_content
+            print(f"Problem statement updated at {instructions_file}.")
+            return "UPDATED"
 
     except requests.exceptions.HTTPError as e:
         print(
@@ -241,10 +258,11 @@ def fetch_and_save_instructions(
         )
         if verbose:
             print(f"Response content:\n{e.response.text}", file=sys.stderr)
+        return "FAILED_FETCH"
     except requests.exceptions.RequestException as e:
         print(f"Error: Failed to fetch problem statement. {e}", file=sys.stderr)
-    except OSError as e:
-        print(f"Error: Could not write problem statement file. {e}", file=sys.stderr)
+        return "FAILED_FETCH"
+    # OSError for writing is handled above
     except Exception as e:  # Catch other potential errors, e.g. from BeautifulSoup
         print(
             f"An unexpected error occurred while fetching/parsing instructions: {e}",
@@ -254,12 +272,10 @@ def fetch_and_save_instructions(
             import traceback
 
             traceback.print_exc()
+        return "FAILED_UNEXPECTED"
 
 
 # --- Language Scaffolding Functions ---
-# (These functions remain largely the same as before, ensure 'verbose' is passed)
-
-
 def scaffold_rust_project(
     dst_path: Path, year: str, day_str_padded: str, verbose: bool
 ) -> None:
@@ -536,13 +552,20 @@ def parse_arguments() -> argparse.Namespace:
         metavar="LANG",
         help="Languages to scaffold project structures for. \n"
         f"Supported: {', '.join(LANGUAGES)}. \n"
-        "Default: 'all' (scaffolds for all supported languages).",
+        "Default: 'all' (scaffolds for all supported languages if not refreshing instructions).",
     )
     parser.add_argument(
         "-i",
         "--instructions",
         action="store_true",
-        help="Download the problem statement/instructions as a text file.",
+        help="Download the problem statement/instructions as a text file during setup.",
+    )
+    parser.add_argument(
+        "--refresh-instructions",
+        action="store_true",
+        help="Re-download and save the problem statement, overwriting any existing version. \n"
+        "Useful for fetching Part Two if it was released after initial setup. \n"
+        "If this flag is used, other actions like input download and language scaffolding are skipped.",
     )
     parser.add_argument(
         "--base-dir",
@@ -599,12 +622,22 @@ def main_logic() -> None:
     day_project_dir = create_day_folder(
         year_str, day_str_padded, args.base_dir, args.verbose
     )
+
+    if args.refresh_instructions:
+        print("\nAttempting to refresh instructions only...")
+        # The fetch_and_save_instructions function now prints its own detailed status.
+        _ = fetch_and_save_instructions(
+            year_str, day_str_unpadded, session_cookie, day_project_dir, args.verbose
+        )
+        print("Instructions refresh operation finished.")
+        sys.exit(0)
+
     fetch_input(
         year_str, day_str_unpadded, session_cookie, day_project_dir, args.verbose
     )
 
     if args.instructions:
-        fetch_and_save_instructions(
+        _ = fetch_and_save_instructions(
             year_str, day_str_unpadded, session_cookie, day_project_dir, args.verbose
         )
 
@@ -646,9 +679,8 @@ if __name__ == "__main__":
         sys.exit(130)
     except Exception as e:
         print(f"An unexpected error occurred: {e}", file=sys.stderr)
-        if (
-            "--verbose" in sys.argv or "-v" in sys.argv
-        ):  # Crude check if verbose was intended
+        is_verbose = "--verbose" in sys.argv or "-v" in sys.argv
+        if is_verbose:
             import traceback
 
             traceback.print_exc()
